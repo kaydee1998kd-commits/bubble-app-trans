@@ -1,0 +1,104 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install xcodegen ldid
+
+      - name: Show project files
+        run: |
+          echo "=== All files ==="
+          find . -type f -not -path './.git/*' | sort
+          echo ""
+          echo "=== Swift files ==="
+          find . -name "*.swift" -type f
+
+      - name: Generate Xcode project
+        run: |
+          xcodegen generate
+          echo "=== Project generated ==="
+          xcodebuild -list -project BubbleTranslate.xcodeproj
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project BubbleTranslate.xcodeproj \
+            -scheme BubbleTranslate \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO \
+            ENABLE_BITCODE=NO \
+            -derivedDataPath build/DerivedData \
+            2>&1 | tee build.log
+
+      - name: Show errors if build failed
+        if: failure()
+        run: |
+          echo ""
+          echo "========================================="
+          echo "  BUILD ERRORS - READ BELOW"
+          echo "========================================="
+          grep -A 3 "error:" build.log || echo "No 'error:' found in log"
+          echo ""
+          echo "=== Last 100 lines of build log ==="
+          tail -100 build.log
+
+      - name: Verify app binary
+        run: |
+          APP_PATH=$(find build/DerivedData -name "BubbleTranslate.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: BubbleTranslate.app not found!"
+            find build/DerivedData -name "*.app" -type d || true
+            exit 1
+          fi
+          echo "App found: $APP_PATH"
+          echo "=== App contents ==="
+          ls -la "$APP_PATH/"
+          BINARY_SIZE=$(stat -f%z "$APP_PATH/BubbleTranslate" 2>/dev/null || echo "0")
+          echo "Binary size: $BINARY_SIZE bytes"
+          if [ "$BINARY_SIZE" -lt 50000 ]; then
+            echo "WARNING: Binary is very small, build may have failed"
+          fi
+
+      - name: Create IPA
+        run: |
+          APP_PATH=$(find build/DerivedData -name "BubbleTranslate.app" -type d | head -1)
+          mkdir -p build/Payload
+          cp -r "$APP_PATH" build/Payload/
+          ldid -S build/Payload/BubbleTranslate.app/BubbleTranslate
+          cd build
+          zip -r BubbleTranslate.ipa Payload/
+          cd ..
+          ls -lh build/BubbleTranslate.ipa
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BubbleTranslate-IPA
+          path: build/BubbleTranslate.ipa
+          retention-days: 30
