@@ -163,7 +163,7 @@ class TranslationPanelView: UIView {
 
     @objc private func speakTranslation() {
         let utterance = AVSpeechUtterance(string: currentTranslation)
-        utterance.language = "en-US"
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = 0.9
         AVSpeechSynthesizer().speak(utterance)
     }
